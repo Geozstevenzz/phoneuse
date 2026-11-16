@@ -185,14 +185,76 @@ NOTABLE = re.compile(r"\*\*\* ERROR|Connection closed|connection request from|In
                      r"mDNS|DNS-SD|failed", re.I)
 
 
+NO_VIDEO_AFTER = 10  # seconds between "starting mirroring" and the first video before the log warns
+
+
+class MirrorSession:
+    """Watches one AirPlay session in UxPlay's output. The phone can show "mirroring"
+    while no video reaches the PC (seen 2026-11-16 on sessions that came in over IPv6:
+    UxPlay's UDP ports are bound on IPv4 only). Writes a timestamped warning to the log
+    and the console when no video follows the start, and a summary when the session ends."""
+
+    def __init__(self, log, echo):
+        self.log, self.echo, self.lock = log, echo, threading.Lock()
+        self.family = self.local = self.remote = None
+        self.started = self.video = None
+        self.timer = None
+
+    def note(self, text):
+        line = f"{time.strftime('%H:%M:%S')} phoneuse: {text}"
+        with self.lock:
+            self.log.write(line + "\n")
+            self.log.flush()
+        if self.echo:
+            print(line, flush=True)
+
+    def where(self):
+        return f"{self.family or '?'} client {self.remote or '?'} -> PC {self.local or '?'}"
+
+    def feed(self, line):
+        if m := re.search(r"Accepted (IPv[46]) client", line):
+            self.family, self.local, self.remote, self.started, self.video = m[1], None, None, None, None
+        elif m := re.match(r"\s*Local\s*:\s*(\S+)", line):
+            self.local = m[1]
+        elif m := re.match(r"\s*Remote\s*:\s*(\S+)", line):
+            self.remote = m[1]
+        elif "raop_rtp_mirror starting mirroring" in line:
+            self.started, self.video = time.time(), None
+            if self.timer:
+                self.timer.cancel()
+            self.timer = threading.Timer(NO_VIDEO_AFTER, self.check_video, args=(self.started,))
+            self.timer.daemon = True
+            self.timer.start()
+        elif "Begin streaming to GStreamer video pipeline" in line:
+            self.video = time.time()
+            if self.started:
+                self.note(f"video arrived {self.video - self.started:.1f} s after mirroring started ({self.where()})")
+        elif re.search(r"Connection closed|lost connection|running is no longer true", line) and self.started:
+            lasted = time.time() - self.started
+            self.note(f"session ended after {lasted:.0f} s, video={'yes' if self.video else 'NO'} ({self.where()})")
+            self.started = None
+            if self.timer:
+                self.timer.cancel()
+
+    def check_video(self, started):
+        if self.started == started and not self.video:
+            self.note(f"WARNING: mirroring started {NO_VIDEO_AFTER} s ago but no video has arrived "
+                      f"({self.where()}). The phone shows mirroring while the PC sees nothing; "
+                      "stop and start Screen Mirroring on the phone.")
+
+
 def follow_sender(stream, echo=False):
     """Log UxPlay's output and tell the HID daemon which phone is mirroring, so the
     Bluetooth mouse and keyboard go to that phone. With echo, also print the lines
-    that matter (errors, connections) to this console."""
+    that matter (errors, connections) to this console. Each log line gets the time it
+    was read, so drops can be matched with what the phone or agent was doing."""
     with open(UXPLAY_LOG, "a", encoding="utf-8", errors="replace") as log:
+        session = MirrorSession(log, echo)
         for line in stream:
-            log.write(line)
-            log.flush()
+            with session.lock:
+                log.write(f"{time.strftime('%H:%M:%S')} {line}")
+                log.flush()
+            session.feed(line)
             if echo and NOTABLE.search(line) and not SENDER.search(line):
                 print(time.strftime("%H:%M:%S"), "uxplay:", line.strip(), flush=True)
             m = SENDER.search(line)
