@@ -249,3 +249,25 @@ leftover; close it, or `phoneuse back` until you reach the app's main view.
   measured taps register 10 out of 10 on a still screen.
 - Taps happen on their own wherever the pointer rests: Dwell Control is on. Ask
   the user to turn it off (Accessibility → Touch → AssistiveTouch → Dwell Control).
+- The floating AssistiveTouch button can sit on top of the control you need (in TikTok
+  it covers a post's "..." button). A tap there opens the AssistiveTouch menu instead.
+  Drag the button to the screen edge once (`gesture down X Y hold 0.6 move 0.06 0.32 0.8
+  hold 0.3 up`), and dismiss its menu by tapping empty space.
+- A tap is refused with "the screen changed since your last look" while a video plays or
+  a sheet animates: read the screen again, then add `--force` only when the target is
+  fixed (a sheet button, a tab bar). Leave about 1.5 s between taps that open sheets; a
+  confirm sheet can take longer to appear, so read the screen until it is there.
+- Status says mirroring but the picture never updates (`phoneuse status`: `live=0`,
+  `received=` not growing): the phone has a session open that sends no video. Ask the
+  user to stop and start Screen Mirroring. On Windows this happened only on sessions that
+  came in over IPv6 (UxPlay's UDP ports are bound on IPv4 only); `phoneuse-uxplay.log` has
+  timestamped `phoneuse:` lines per session saying whether video arrived. Auto-Lock also
+  ends mirroring: the phone should be set to Never while agents use it, and
+  `phoneuse awake on` keeps the screen awake between actions.
+- Windows: `type` fails with "Vision models aren't installed" although `phoneuse doctor`
+  passes: the vision service isn't running and the CLI looks for `.venv-vision/bin/python`
+  only. Start `.venv-vision\Scripts\python.exe -m phoneuse.vision` hidden from the checkout
+  folder, wait a few seconds, and type again.
+- Long runs of taps can land on the wrong app or feed (TikTok reopened on For You, not the
+  profile). Check the screen is the intended one before each destructive step, and compare
+  counts such as Following before and after.
